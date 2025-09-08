@@ -7,6 +7,8 @@ import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
 import { PDFDocument } from "pdf-lib";
 
+import dynamic from "next/dynamic";
+
 import {
   DndContext,
   closestCenter,
@@ -21,7 +23,8 @@ import {
   verticalListSortingStrategy,
   useSortable,
 } from "@dnd-kit/sortable";
-import PageItem from "./pageItem";
+
+const PageItem = dynamic(() => import("./pageItem"), { ssr: false });
 
 pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.mjs`;
 
