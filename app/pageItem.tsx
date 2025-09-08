@@ -1,24 +1,18 @@
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
-
-import { pdfjs } from "react-pdf";
-pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.mjs`;
-
+"use client";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useEffect, useState } from "react";
-import { Document, Page } from "react-pdf";
+import { useState, useEffect } from "react";
+import dynamic from "next/dynamic";
+
+const Document = dynamic(
+  () => import("react-pdf").then((mod) => ({ default: mod.Document })),
+  { ssr: false }
+);
+
+const Page = dynamic(
+  () => import("react-pdf").then((mod) => ({ default: mod.Page })),
+  { ssr: false }
+);
 
 type PDFPageItem = {
   fileIndex: number;
@@ -33,38 +27,11 @@ export default function PageItem({
   item: PDFPageItem;
   file: File;
 }) {
-  const [renderableFile, setRenderableFile] = useState<string | null>(null);
-  const [numPages, setNumPages] = useState<number | null>(null);
   const [isClient, setIsClient] = useState(false);
-  const [canRenderPage, setCanRenderPage] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
-    if (numPages) {
-      const timeout = setTimeout(() => {
-        setCanRenderPage(true);
-      }, 100);
-      return () => clearTimeout(timeout);
-    }
-  }, [numPages]);
-
-  useEffect(() => {
-    let url: string | null = null;
-    const prepareBuffer = async () => {
-      const buffer = await file.arrayBuffer();
-      const blob = new Blob([buffer], { type: file.type });
-      url = URL.createObjectURL(blob);
-      setRenderableFile(url);
-    };
-
-    prepareBuffer();
-
-    // return () => {
-    //   if (url) {
-    //     URL.revokeObjectURL(url);
-    //   }
-    // };
-  }, [file]);
+  }, []);
 
   const { attributes, listeners, setNodeRef, transform, transition } =
     useSortable({ id: item.id });
@@ -74,36 +41,21 @@ export default function PageItem({
     transition,
   };
 
-  if (!renderableFile) {
-    return null;
+  if (!isClient) {
+    return <div>Loading...</div>;
   }
 
-  if (!renderableFile || !isClient) return null;
-
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...attributes}
-      {...listeners}
-      className="w-fit"
-    >
-      <p>
-        {file.name}, Page {item.pageNumber}
-      </p>
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <Document
-        file={renderableFile}
-        onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-        onLoadError={(err) => console.error(err)}
+        file={file}
+        onLoadError={(err) => console.error("PageItem load error:", err)}
       >
-        {canRenderPage && (
-          <Page
-            pageNumber={item.pageNumber + 1}
-            width={300}
-            onRenderError={(err) => console.error(err)}
-          />
-        )}
+        <Page pageNumber={item.pageNumber + 1} width={300} />
       </Document>
+      <p>
+        File {item.fileIndex + 1}, Page {item.pageNumber + 1}
+      </p>
     </div>
   );
 }

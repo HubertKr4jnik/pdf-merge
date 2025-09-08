@@ -2,31 +2,29 @@
 import Image from "next/image";
 import { useState, useEffect, useRef } from "react";
 import Dropzone from "react-dropzone";
-import { Document, Page, pdfjs } from "react-pdf";
-import "react-pdf/dist/Page/AnnotationLayer.css";
-import "react-pdf/dist/Page/TextLayer.css";
 import { PDFDocument } from "pdf-lib";
-
 import dynamic from "next/dynamic";
 
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  useSortable,
-} from "@dnd-kit/sortable";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
 
-const PageItem = dynamic(() => import("./pageItem"), { ssr: false });
+const Document = dynamic(
+  () => import("react-pdf").then((mod) => ({ default: mod.Document })),
+  { ssr: false }
+);
 
-pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.mjs`;
+const Page = dynamic(
+  () => import("react-pdf").then((mod) => ({ default: mod.Page })),
+  { ssr: false }
+);
+
+const loadPdfjs = async () => {
+  if (typeof window !== "undefined") {
+    const { pdfjs } = await import("react-pdf");
+    pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.mjs`;
+    return pdfjs;
+  }
+};
 
 type PDFPageItem = {
   fileIndex: number;
@@ -43,9 +41,13 @@ export default function Home() {
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [mergedFileName, setMergedFileName] = useState<string | null>(null);
   const [pageItems, setPageItems] = useState<PDFPageItem[]>([]);
+  const [pdfjsLoaded, setPdfjsLoaded] = useState(false);
 
   useEffect(() => {
     setIsClient(true);
+    loadPdfjs().then(() => {
+      setPdfjsLoaded(true);
+    });
   }, []);
 
   useEffect(() => {
@@ -58,16 +60,19 @@ export default function Home() {
         clearTimeout(resizeTimeoutRef.current);
       }
 
-      const containerWidth = fileContainerRef.current?.offsetWidth;
-      if (containerWidth && containerWidth > 0) {
-        resizeTimeoutRef.current = setTimeout(() => {
-          setDisplayFileWidth(containerWidth - 40);
-        }, 150);
-      }
+      resizeTimeoutRef.current = setTimeout(() => {
+        const containerWidth = fileContainerRef.current?.offsetWidth;
+        console.log("Container width:", containerWidth);
+
+        if (containerWidth && containerWidth > 0) {
+          const newWidth = containerWidth - 40;
+          console.log("Setting display width to:", newWidth);
+          setDisplayFileWidth(newWidth);
+        }
+      }, 200);
     };
 
     updateWidth();
-
     window.addEventListener("resize", updateWidth);
 
     return () => {
@@ -76,10 +81,12 @@ export default function Home() {
         clearTimeout(resizeTimeoutRef.current);
       }
     };
-  }, [isClient, files]);
+  }, [isClient]);
 
   const handleFileDrop = (acceptedFiles: Array<File>) => {
     setFiles(acceptedFiles);
+    setFilePagesMap({});
+    setPageItems([]);
     console.log(acceptedFiles);
     acceptedFiles.forEach((file) => {
       console.log(file.name);
@@ -92,27 +99,14 @@ export default function Home() {
   ) => {
     setFilePagesMap((prev) => {
       const updated = { ...prev, [index]: numPages };
-
-      if (files && Object.keys(updated).length == files.length) {
-        const newPageItems: PDFPageItem[] = [];
-        files.forEach((file, index) => {
-          const pages = updated[index];
-          for (let i = 0; i < pages; i++) {
-            newPageItems.push({
-              fileIndex: index,
-              pageNumber: i,
-              id: `f${index}-p${i}`,
-            });
-          }
-        });
-        setPageItems(newPageItems);
-      }
+      console.log(`File ${index} loaded with ${numPages} pages`);
       return updated;
     });
-    console.log(numPages, index);
   };
 
   const handlePdfMerge = async () => {
+    if (!files) return;
+
     const mergedPDF = await PDFDocument.create();
 
     for (const file of files) {
@@ -135,37 +129,24 @@ export default function Home() {
     a.click();
   };
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
-    })
-  );
+  if (!isClient || !pdfjsLoaded) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    );
+  }
 
-  const handleDragEnd = (e) => {
-    const { active, over } = e;
-    if (!active || over.id === active.id) {
-      return;
-    }
-
-    const oldIndex = pageItems.findIndex((i) => i.id === active.id);
-    const newIndex = pageItems.findIndex((i) => i.id === over.id);
-
-    if (oldIndex !== -1 && newIndex !== -1) {
-      setPageItems((items) => arrayMove(items, oldIndex, newIndex));
-    }
-  };
   return (
     <div className="min-h-screen">
       <h1 className="text-3xl font-bold text-center mt-6">
-        Welome, upload a pdf file
+        Welcome, upload a pdf file
       </h1>
       <div className="flex justify-center mx-auto pt-3 gap-4">
         <input
           type="text"
           value={mergedFileName || ""}
-          onInput={(e) => setMergedFileName(e.target.value)}
+          onChange={(e) => setMergedFileName(e.target.value)}
           placeholder="Enter merged file name..."
           className="border border-white p-1 text-white"
         />
@@ -185,83 +166,48 @@ export default function Home() {
         {({ getRootProps, getInputProps }) => (
           <div
             {...getRootProps()}
-            className="flex justify-center place-items-center border-red-600 border-2 border-dashed h-22 w-4/5 mx-auto my-4 cursor-pointer"
+            className="flex justify-center place-items-center border-red-600 border-2 border-dashed h-32 w-4/5 mx-auto my-4 cursor-pointer"
           >
             <input {...getInputProps()} />
-            <p className="hover:underline">
+            <p className="hover:underline text-center p-4">
               Drag 'n' drop some files here, or click to select files
             </p>
           </div>
         )}
       </Dropzone>
-      {/* {files && isClient && (
-        <div className="flex flex-col">
-          {files.map((file, index) => {
-            return (
-              <div
-                key={index}
-                className="border-2 border-blue-600 border-dotted"
-              >
-                <p className="px-4 pt-2 wrap-anywhere">{file.name}</p>
+
+      <div ref={fileContainerRef}>
+        {files && (
+          <div>
+            {files.map((file, fileIndex) => (
+              <div key={`file-${fileIndex}-${file.name}`}>
                 <Document
                   file={file}
-                  key={`file-${index}`}
+                  onLoadSuccess={(data) => handleLoadSuccess(data, fileIndex)}
                   onLoadError={(err) => console.error(err)}
-                  onLoadSuccess={(data) => handleLoadSuccess(data, index)}
-                  className="flex flex-wrap gap-2"
+                  className="flex flex-wrap justify-center gap-4"
                 >
-                  {filePagesMap[index] &&
-                    Array.from({ length: filePagesMap[index] }, (_, i) => (
-                      <div
-                        key={`page-${index}-${i}-container`}
-                        ref={fileContainerRef}
-                      >
-                        <div className="flex justify-center w-42 px-4 bg-gray-800">
-                          <Page
-                            pageNumber={i + 1}
-                            key={`page-${index}-${i}`}
-                            className=" my-2"
-                            width={displayFileWidth}
-                          />
+                  {filePagesMap[fileIndex] &&
+                    Array.from(
+                      { length: filePagesMap[fileIndex] },
+                      (_, pageIndex) => (
+                        <div
+                          key={`file-${fileIndex}-page-${pageIndex}`}
+                          className="w-fit"
+                        >
+                          <p>
+                            {file.name}, Page {pageIndex + 1}
+                          </p>
+                          <Page pageNumber={pageIndex + 1} width={300} />
                         </div>
-                      </div>
-                    ))}
+                      )
+                    )}
                 </Document>
               </div>
-            );
-          })}
-        </div>
-      )} */}
-      {files && isClient && (
-        <div>
-          {files.map((file, index) => (
-            <Document
-              key={`loader-${index}`}
-              file={file}
-              onLoadSuccess={(data) => handleLoadSuccess(data, index)}
-              onLoadError={(err) => console.error(err)}
-            ></Document>
-          ))}
-        </div>
-      )}
-      {pageItems.length > 0 && isClient && (
-        // <DndContext
-        //   sensors={sensors}
-        //   collisionDetection={closestCenter}
-        //   onDragEnd={handleDragEnd}
-        // >
-        //   <SortableContext
-        //     items={pageItems.map((item) => item.id)}
-        //     strategy={verticalListSortingStrategy}
-        //   >
-        <div className="flex flex-row flex-wrap justify-center gap-4">
-          {pageItems.map((item) => (
-            <PageItem key={item.id} item={item} file={files[item.fileIndex]} />
-          ))}
-        </div>
-        //       </SortableContext>
-        //     </DndContext>
-      )}
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
