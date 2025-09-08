@@ -1,103 +1,264 @@
+"use client";
 import Image from "next/image";
+import { useState, useEffect, useRef } from "react";
+import Dropzone from "react-dropzone";
+import { Document, Page, pdfjs } from "react-pdf";
+import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
+import { PDFDocument } from "pdf-lib";
+
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  verticalListSortingStrategy,
+  useSortable,
+} from "@dnd-kit/sortable";
+import PageItem from "./pageItem";
+
+pdfjs.GlobalWorkerOptions.workerSrc = `/pdf.worker.mjs`;
+
+type PDFPageItem = {
+  fileIndex: number;
+  pageNumber: number;
+  id: string;
+};
 
 export default function Home() {
-  return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [files, setFiles] = useState<Array<File> | null>(null);
+  const [filePagesMap, setFilePagesMap] = useState<Record<number, number>>({});
+  const [isClient, setIsClient] = useState<boolean>(false);
+  const [displayFileWidth, setDisplayFileWidth] = useState<number>(300);
+  const fileContainerRef = useRef<HTMLDivElement>(null);
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const [mergedFileName, setMergedFileName] = useState<string | null>(null);
+  const [pageItems, setPageItems] = useState<PDFPageItem[]>([]);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isClient) {
+      return;
+    }
+
+    const updateWidth = () => {
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+
+      const containerWidth = fileContainerRef.current?.offsetWidth;
+      if (containerWidth && containerWidth > 0) {
+        resizeTimeoutRef.current = setTimeout(() => {
+          setDisplayFileWidth(containerWidth - 40);
+        }, 150);
+      }
+    };
+
+    updateWidth();
+
+    window.addEventListener("resize", updateWidth);
+
+    return () => {
+      window.removeEventListener("resize", updateWidth);
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+    };
+  }, [isClient, files]);
+
+  const handleFileDrop = (acceptedFiles: Array<File>) => {
+    setFiles(acceptedFiles);
+    console.log(acceptedFiles);
+    acceptedFiles.forEach((file) => {
+      console.log(file.name);
+    });
+  };
+
+  const handleLoadSuccess = (
+    { numPages }: { numPages: number },
+    index: number
+  ) => {
+    setFilePagesMap((prev) => {
+      const updated = { ...prev, [index]: numPages };
+
+      if (files && Object.keys(updated).length == files.length) {
+        const newPageItems: PDFPageItem[] = [];
+        files.forEach((file, index) => {
+          const pages = updated[index];
+          for (let i = 0; i < pages; i++) {
+            newPageItems.push({
+              fileIndex: index,
+              pageNumber: i,
+              id: `f${index}-p${i}`,
+            });
+          }
+        });
+        setPageItems(newPageItems);
+      }
+      return updated;
+    });
+    console.log(numPages, index);
+  };
+
+  const handlePdfMerge = async () => {
+    const mergedPDF = await PDFDocument.create();
+
+    for (const file of files) {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await PDFDocument.load(arrayBuffer);
+      const pages = await mergedPDF.copyPages(pdf, pdf.getPageIndices());
+      pages.forEach((page) => mergedPDF.addPage(page));
+    }
+
+    const savedPDF = await mergedPDF.save();
+
+    const mergedFileBlob = new Blob([savedPDF], { type: "application/pdf" });
+    const mergedFileURL = URL.createObjectURL(mergedFileBlob);
+
+    console.log(mergedFileURL);
+
+    const a = document.createElement("a");
+    a.href = mergedFileURL;
+    a.download = mergedFileName || "merged";
+    a.click();
+  };
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 5,
+      },
+    })
+  );
+
+  const handleDragEnd = (e) => {
+    const { active, over } = e;
+    if (!active || over.id === active.id) {
+      return;
+    }
+
+    const oldIndex = pageItems.findIndex((i) => i.id === active.id);
+    const newIndex = pageItems.findIndex((i) => i.id === over.id);
+
+    if (oldIndex !== -1 && newIndex !== -1) {
+      setPageItems((items) => arrayMove(items, oldIndex, newIndex));
+    }
+  };
+  return (
+    <div className="min-h-screen">
+      <h1 className="text-3xl font-bold text-center mt-6">
+        Welome, upload a pdf file
+      </h1>
+      <div className="flex justify-center mx-auto pt-3 gap-4">
+        <input
+          type="text"
+          value={mergedFileName || ""}
+          onInput={(e) => setMergedFileName(e.target.value)}
+          placeholder="Enter merged file name..."
+          className="border border-white p-1 text-white"
+        />
+        <input
+          type="button"
+          value="Merge pdfs"
+          onClick={handlePdfMerge}
+          className="px-4 py-2 bg-white text-black hover:scale-110 transition-all cursor-pointer"
+        />
+      </div>
+      <Dropzone
+        onDrop={(acceptedFiles) => {
+          handleFileDrop(acceptedFiles);
+        }}
+        accept={{ "application/pdf": [] }}
+      >
+        {({ getRootProps, getInputProps }) => (
+          <div
+            {...getRootProps()}
+            className="flex justify-center place-items-center border-red-600 border-2 border-dashed h-22 w-4/5 mx-auto my-4 cursor-pointer"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            <input {...getInputProps()} />
+            <p className="hover:underline">
+              Drag 'n' drop some files here, or click to select files
+            </p>
+          </div>
+        )}
+      </Dropzone>
+      {/* {files && isClient && (
+        <div className="flex flex-col">
+          {files.map((file, index) => {
+            return (
+              <div
+                key={index}
+                className="border-2 border-blue-600 border-dotted"
+              >
+                <p className="px-4 pt-2 wrap-anywhere">{file.name}</p>
+                <Document
+                  file={file}
+                  key={`file-${index}`}
+                  onLoadError={(err) => console.error(err)}
+                  onLoadSuccess={(data) => handleLoadSuccess(data, index)}
+                  className="flex flex-wrap gap-2"
+                >
+                  {filePagesMap[index] &&
+                    Array.from({ length: filePagesMap[index] }, (_, i) => (
+                      <div
+                        key={`page-${index}-${i}-container`}
+                        ref={fileContainerRef}
+                      >
+                        <div className="flex justify-center w-42 px-4 bg-gray-800">
+                          <Page
+                            pageNumber={i + 1}
+                            key={`page-${index}-${i}`}
+                            className=" my-2"
+                            width={displayFileWidth}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                </Document>
+              </div>
+            );
+          })}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      )} */}
+      {files && isClient && (
+        <div>
+          {files.map((file, index) => (
+            <Document
+              key={`loader-${index}`}
+              file={file}
+              onLoadSuccess={(data) => handleLoadSuccess(data, index)}
+              onLoadError={(err) => console.error(err)}
+            ></Document>
+          ))}
+        </div>
+      )}
+      {pageItems.length > 0 && isClient && (
+        // <DndContext
+        //   sensors={sensors}
+        //   collisionDetection={closestCenter}
+        //   onDragEnd={handleDragEnd}
+        // >
+        //   <SortableContext
+        //     items={pageItems.map((item) => item.id)}
+        //     strategy={verticalListSortingStrategy}
+        //   >
+        <div className="flex flex-row flex-wrap justify-center gap-4">
+          {pageItems.map((item) => (
+            <PageItem key={item.id} item={item} file={files[item.fileIndex]} />
+          ))}
+        </div>
+        //       </SortableContext>
+        //     </DndContext>
+      )}
     </div>
   );
 }
