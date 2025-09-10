@@ -212,7 +212,7 @@ export default function Home() {
     }
   };
 
-  const handleDragEnd = (event: any) => {
+  const handleDragEnd = (event) => {
     const { active, over } = event;
 
     if (active.id !== over.id && over) {
