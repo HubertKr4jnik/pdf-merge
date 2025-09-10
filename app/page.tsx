@@ -138,7 +138,7 @@ export default function Home() {
       viewport: viewport,
     };
 
-    await page.render(renderContext as any).promise;
+    await page.render(renderContext).promise;
     return canvas.toDataURL("image/png");
   };
 
@@ -240,9 +240,7 @@ export default function Home() {
 
     const savedPDF = await mergedPDF.save();
 
-    const mergedFileBlob = new Blob([savedPDF as any], {
-      type: "application/pdf",
-    });
+    const mergedFileBlob = new Blob([savedPDF], { type: "application/pdf" });
     const mergedFileURL = URL.createObjectURL(mergedFileBlob);
 
     console.log(mergedFileURL);
