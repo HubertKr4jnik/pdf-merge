@@ -13,10 +13,10 @@ type PDFPageItem = {
 interface PageItemProps {
   item: PDFPageItem;
   imageUrl?: string;
-  width: number;
+  onDelete: (pageId: string) => void;
 }
 
-export default function PageItem({ item, imageUrl, width }: PageItemProps) {
+export default function PageItem({ item, imageUrl, onDelete }: PageItemProps) {
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {
@@ -38,22 +38,27 @@ export default function PageItem({ item, imageUrl, width }: PageItemProps) {
     opacity: isDragging ? 0.5 : 1,
   };
 
-  console.log(`PageItem ${item.id}:`, {
-    imageUrl: imageUrl ? "HAS_IMAGE" : "NO_IMAGE",
-  });
-
   if (!imageUrl) {
     return <div>Loading...</div>;
   }
 
   return (
-    <img
+    <div
+      className="relative max-w-1/5"
       ref={setNodeRef}
       style={style}
       {...attributes}
       {...listeners}
-      src={imageUrl}
-      width={width}
-    />
+    >
+      <span
+        onClick={(e) => {
+          onDelete(item.id);
+        }}
+        className="absolute top-3 right-4 font-bold text-lg text-black cursor-pointer hover:scale-125 transition-all"
+      >
+        X
+      </span>
+      <img src={imageUrl} />
+    </div>
   );
 }

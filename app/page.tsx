@@ -1,8 +1,9 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Dropzone from "react-dropzone";
 import { PDFDocument } from "pdf-lib";
-import dynamic from "next/dynamic";
+import PageItem from "./pageItem";
+
 import {
   arrayMove,
   SortableContext,
@@ -16,13 +17,6 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-
-import PageItem from "./pageItem";
-
-const Document = dynamic(
-  () => import("react-pdf").then((mod) => ({ default: mod.Document })),
-  { ssr: false }
-);
 
 const loadPdfjs = async () => {
   if (typeof window !== "undefined") {
@@ -41,12 +35,8 @@ type PDFPageItem = {
 
 export default function Home() {
   const [files, setFiles] = useState<Array<File> | null>(null);
-  const [filePagesMap, setFilePagesMap] = useState<Record<number, number>>({});
   const [fileUrls, setFileUrls] = useState<Array<string> | null>(null);
   const [isClient, setIsClient] = useState<boolean>(false);
-  const [displayFileWidth, setDisplayFileWidth] = useState<number>(300);
-  const fileContainerRef = useRef<HTMLDivElement>(null);
-  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [mergedFileName, setMergedFileName] = useState<string | null>(null);
   const [pageItems, setPageItems] = useState<PDFPageItem[]>([]);
   const [pdfjsLoaded, setPdfjsLoaded] = useState(false);
@@ -68,51 +58,13 @@ export default function Home() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!isClient) {
-      return;
-    }
-
-    const updateWidth = () => {
-      if (resizeTimeoutRef.current) {
-        clearTimeout(resizeTimeoutRef.current);
-      }
-
-      resizeTimeoutRef.current = setTimeout(() => {
-        const containerWidth = fileContainerRef.current?.offsetWidth;
-        console.log("Container width:", containerWidth);
-
-        if (containerWidth && containerWidth > 0) {
-          const newWidth = containerWidth - 40;
-          console.log("Setting display width to:", newWidth);
-          setDisplayFileWidth(newWidth);
-        }
-      }, 200);
-    };
-
-    updateWidth();
-    window.addEventListener("resize", updateWidth);
-
-    return () => {
-      window.removeEventListener("resize", updateWidth);
-      if (resizeTimeoutRef.current) {
-        clearTimeout(resizeTimeoutRef.current);
-      }
-    };
-  }, [isClient]);
-
-  const handleFileDrop = (acceptedFiles: Array<File>) => {
+  const handleFileDrop = async (acceptedFiles: Array<File>) => {
     setFiles(acceptedFiles);
-
     const urls = acceptedFiles.map((file) => URL.createObjectURL(file));
     setFileUrls(urls);
-
-    setFilePagesMap({});
     setPageItems([]);
-    console.log(acceptedFiles);
-    acceptedFiles.forEach((file) => {
-      console.log(file.name);
-    });
+    setPageImages({});
+    await generatePageImages(urls, acceptedFiles);
   };
 
   const convertPdfToImage = async (
@@ -142,40 +94,8 @@ export default function Home() {
     return canvas.toDataURL("image/png");
   };
 
-  const handleLoadSuccess = (
-    { numPages }: { numPages: number },
-    index: number
-  ) => {
-    setFilePagesMap((prev) => {
-      const updated = { ...prev, [index]: numPages };
-      console.log(`File ${index} loaded with ${numPages} pages`);
-
-      if (files && Object.keys(updated).length === files.length) {
-        generatePageImages(updated);
-      }
-
-      // if (files && Object.keys(updated).length === files.length) {
-      //   const newPageItems: PDFPageItem[] = [];
-      //   files.forEach((file, fileIndex) => {
-      //     const pages = updated[fileIndex];
-      //     for (let i = 0; i < pages; i++) {
-      //       newPageItems.push({
-      //         fileIndex: fileIndex,
-      //         pageNumber: i,
-      //         id: `f-${fileIndex}-p${i}`,
-      //         fileName: file.name,
-      //       });
-      //     }
-      //   });
-      //   setPageItems(newPageItems);
-      // }
-
-      return updated;
-    });
-  };
-
-  const generatePageImages = async (pagesMap: Record<number, number>) => {
-    if (!files || !fileUrls) {
+  const generatePageImages = async (urls: string[], files: File[]) => {
+    if (!files || !urls) {
       return;
     }
 
@@ -185,15 +105,18 @@ export default function Home() {
 
     try {
       for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-        const numPages = pagesMap[fileIndex];
-        const fileUrl = fileUrls[fileIndex];
+        const fileUrl = urls[fileIndex];
 
-        for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+        const pdfjsLib = await import("pdfjs-dist");
+        const loadingTask = pdfjsLib.getDocument(fileUrl);
+        const pdfDocument = await loadingTask.promise;
+        const numberOfPages = pdfDocument.numPages;
+
+        for (let pageIndex = 0; pageIndex < numberOfPages; pageIndex++) {
           const imageUrl = await convertPdfToImage(fileUrl, pageIndex);
           const pageId = `f-${fileIndex}-p${pageIndex}`;
 
           imageMap[pageId] = imageUrl;
-
           newPageItems.push({
             fileIndex: fileIndex,
             pageNumber: pageIndex,
@@ -251,6 +174,21 @@ export default function Home() {
     a.click();
   };
 
+  const handlePageDelete = (pageId: string) => {
+    setPageItems((prev) => prev.filter((page) => page.id !== pageId));
+
+    setPageImages((prev) => {
+      const newImages = { ...prev };
+
+      if (newImages[pageId] && newImages[pageId].startsWith("blob")) {
+        URL.revokeObjectURL(newImages[pageId]);
+      }
+
+      delete newImages[pageId];
+      return newImages;
+    });
+  };
+
   if (!isClient || !pdfjsLoaded) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -258,10 +196,6 @@ export default function Home() {
       </div>
     );
   }
-
-  console.log("pageItems:", pageItems);
-  console.log("pageImages keys:", Object.keys(pageImages));
-  console.log("pageImages:", pageImages);
 
   return (
     <div className="min-h-screen bg-black">
@@ -302,20 +236,6 @@ export default function Home() {
         )}
       </Dropzone>
 
-      {fileUrls && (
-        <div style={{ display: "none" }}>
-          {fileUrls.map((url, fileIndex) => (
-            <Document
-              key={`loader-${fileIndex}`}
-              file={url}
-              onLoadSuccess={(data) => handleLoadSuccess(data, fileIndex)}
-              onLoadError={(err) => console.error(err)}
-              className="flex flex-wrap justify-center gap-4"
-            />
-          ))}
-        </div>
-      )}
-
       {pageItems.length > 0 && fileUrls && (
         <DndContext
           sensors={sensors}
@@ -326,16 +246,13 @@ export default function Home() {
             items={pageItems.map((item) => item.id)}
             strategy={rectSortingStrategy}
           >
-            <div
-              ref={fileContainerRef}
-              className="flex flex-wrap gap-4 justify-center"
-            >
+            <div className="flex flex-wrap gap-4 justify-center">
               {pageItems.map((item) => (
                 <PageItem
                   key={item.id}
                   item={item}
                   imageUrl={pageImages[item.id]}
-                  width={displayFileWidth}
+                  onDelete={handlePageDelete}
                 ></PageItem>
               ))}
             </div>
