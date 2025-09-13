@@ -198,67 +198,70 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-black">
-      <h1 className="text-3xl text-white font-bold text-center pt-6">
-        Welcome, upload a pdf file
-      </h1>
-      <div className="flex justify-center mx-auto pt-3 gap-4">
-        <input
-          type="text"
-          value={mergedFileName || ""}
-          onChange={(e) => setMergedFileName(e.target.value)}
-          placeholder="Enter merged file name..."
-          className="border border-white p-1 text-white"
-        />
-        <input
-          type="button"
-          value="Merge pdfs"
-          onClick={handlePdfMerge}
-          className="px-4 py-2 bg-white text-black hover:scale-110 transition-all cursor-pointer"
-        />
-      </div>
-      <Dropzone
-        onDrop={(acceptedFiles) => {
-          handleFileDrop(acceptedFiles);
-        }}
-        accept={{ "application/pdf": [] }}
-      >
-        {({ getRootProps, getInputProps }) => (
-          <div
-            {...getRootProps()}
-            className="flex justify-center place-items-center border-red-600 border-2 border-dashed h-32 w-4/5 mx-auto my-4 cursor-pointer"
+    <div className="min-h-screen bg-zinc-950">
+      <header className="flex justify-center place-items-center h-18 bg-zinc-950 border-b border-gray-600">
+        <div className="flex justify-center gap-4">
+          <input
+            type="text"
+            value={mergedFileName || ""}
+            onChange={(e) => setMergedFileName(e.target.value)}
+            placeholder="Merged file name..."
+            className="border border-cyan-600 px-2 rounded text-white"
+          />
+          <input
+            type="button"
+            value="Merge pdfs"
+            onClick={handlePdfMerge}
+            className="px-4 py-2 border border-cyan-600 text-gray-300 hover:text-gray-100 hover:border-cyan-400 transition-all cursor-pointer rounded"
+          />
+        </div>
+      </header>
+      <main className="h-fit my-8">
+        {!files && (
+          <Dropzone
+            onDrop={(acceptedFiles) => {
+              handleFileDrop(acceptedFiles);
+            }}
+            accept={{ "application/pdf": [] }}
           >
-            <input {...getInputProps()} />
-            <p className="text-white hover:underline text-center p-4">
-              Drag 'n' drop some files here, or click to select files
-            </p>
-          </div>
+            {({ getRootProps, getInputProps }) => (
+              <div
+                {...getRootProps()}
+                className="flex justify-center place-items-center border-cyan-800 border-2 hover:border-dotted transition-all h-32 w-4/5 mx-auto my-4 cursor-pointer rounded"
+              >
+                <input {...getInputProps()} />
+                <p className="text-white hover:underline text-center p-4">
+                  Drag 'n' drop some files here, or click to select them <br />
+                  (select all files at once)
+                </p>
+              </div>
+            )}
+          </Dropzone>
         )}
-      </Dropzone>
-
-      {pageItems.length > 0 && fileUrls && (
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragEnd={handleDragEnd}
-        >
-          <SortableContext
-            items={pageItems.map((item) => item.id)}
-            strategy={rectSortingStrategy}
+        {pageItems.length > 0 && fileUrls && (
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
           >
-            <div className="flex flex-wrap gap-4 justify-center">
-              {pageItems.map((item) => (
-                <PageItem
-                  key={item.id}
-                  item={item}
-                  imageUrl={pageImages[item.id]}
-                  onDelete={handlePageDelete}
-                ></PageItem>
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      )}
+            <SortableContext
+              items={pageItems.map((item) => item.id)}
+              strategy={rectSortingStrategy}
+            >
+              <div className="flex flex-wrap gap-4 justify-center">
+                {pageItems.map((item) => (
+                  <PageItem
+                    key={item.id}
+                    item={item}
+                    imageUrl={pageImages[item.id]}
+                    onDelete={handlePageDelete}
+                  ></PageItem>
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+        )}
+      </main>
     </div>
   );
 }

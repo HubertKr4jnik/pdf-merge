@@ -44,7 +44,7 @@ export default function PageItem({ item, imageUrl, onDelete }: PageItemProps) {
 
   return (
     <div
-      className="relative max-w-1/5"
+      className="relative max-w-1/6"
       ref={setNodeRef}
       style={style}
       {...attributes}
@@ -54,11 +54,14 @@ export default function PageItem({ item, imageUrl, onDelete }: PageItemProps) {
         onClick={(e) => {
           onDelete(item.id);
         }}
-        className="absolute top-3 right-4 font-bold text-lg text-black cursor-pointer hover:scale-125 transition-all"
+        className="absolute top-3 right-4 font-bold text-lg text-black cursor-pointer z-1"
       >
         X
       </span>
-      <img src={imageUrl} />
+      <img
+        src={imageUrl}
+        className="brightness-85 hover:brightness-100 rounded transition-all"
+      />
     </div>
   );
 }
