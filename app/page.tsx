@@ -105,8 +105,6 @@ export default function Home() {
     }
 
     setIsGeneratingImages(true);
-    let allImages: Record<string, string> = {};
-    let allPages: PDFPageItem[] = [];
     try {
       for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
         const fileUrl = urls[fileIndex];
