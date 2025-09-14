@@ -60,10 +60,14 @@ export default function Home() {
 
   const handleFileDrop = async (acceptedFiles: Array<File>) => {
     setFiles(acceptedFiles);
+    console.log("All files accepted");
     const urls = acceptedFiles.map((file) => URL.createObjectURL(file));
+    console.log("All files converted to URLs");
     setFileUrls(urls);
+    console.log("File URLs set");
     setPageItems([]);
     setPageImages({});
+    console.log("Generating Images from PDFs");
     await generatePageImages(urls, acceptedFiles);
   };
 
@@ -77,7 +81,7 @@ export default function Home() {
     const pdfDocument = await loadingTask.promise;
     const page = await pdfDocument.getPage(pageNumber + 1);
 
-    const scale = 1.5;
+    const scale = 1.0;
     const viewport = page.getViewport({ scale });
 
     const canvas = document.createElement("canvas");
@@ -91,6 +95,7 @@ export default function Home() {
     };
 
     await page.render(renderContext).promise;
+    page.cleanup();
     return canvas.toDataURL("image/png");
   };
 
@@ -100,9 +105,8 @@ export default function Home() {
     }
 
     setIsGeneratingImages(true);
-    const imageMap: Record<string, string> = {};
-    const newPageItems: PDFPageItem[] = [];
-
+    let allImages: Record<string, string> = {};
+    let allPages: PDFPageItem[] = [];
     try {
       for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
         const fileUrl = urls[fileIndex];
@@ -112,22 +116,44 @@ export default function Home() {
         const pdfDocument = await loadingTask.promise;
         const numberOfPages = pdfDocument.numPages;
 
+        let batchImages: Record<string, string> = {};
+        let batchPages: PDFPageItem[] = [];
+
         for (let pageIndex = 0; pageIndex < numberOfPages; pageIndex++) {
+          console.log(`Generating image from ${fileIndex} ${pageIndex}`);
           const imageUrl = await convertPdfToImage(fileUrl, pageIndex);
           const pageId = `f-${fileIndex}-p${pageIndex}`;
 
-          imageMap[pageId] = imageUrl;
-          newPageItems.push({
+          batchImages[pageId] = imageUrl;
+          batchPages.push({
             fileIndex: fileIndex,
             pageNumber: pageIndex,
             id: pageId,
             fileName: files[fileIndex].name,
           });
-        }
-      }
 
-      setPageImages(imageMap);
-      setPageItems(newPageItems);
+          if ((pageIndex + 1) % 10 === 0 || pageIndex === numberOfPages - 1) {
+            await new Promise((resolve) => {
+              setPageImages((prev) => {
+                const updated = { ...prev, ...batchImages };
+                resolve(null);
+                return updated;
+              });
+            });
+            await new Promise((resolve) => {
+              setPageItems((prev) => {
+                const updated = [...prev, ...batchPages];
+                resolve(null);
+                return updated;
+              });
+            });
+            console.log("Batch finished");
+            batchImages = {};
+            batchPages = [];
+          }
+        }
+        pdfDocument.destroy();
+      }
     } catch (error) {
       console.error(error);
     } finally {
@@ -238,6 +264,7 @@ export default function Home() {
             )}
           </Dropzone>
         )}
+        {/* {console.log(pageItems.length, fileUrls, pageItems > 0 && fileUrls)} */}
         {pageItems.length > 0 && fileUrls && (
           <DndContext
             sensors={sensors}
@@ -249,14 +276,17 @@ export default function Home() {
               strategy={rectSortingStrategy}
             >
               <div className="flex flex-wrap gap-4 justify-center">
-                {pageItems.map((item) => (
-                  <PageItem
-                    key={item.id}
-                    item={item}
-                    imageUrl={pageImages[item.id]}
-                    onDelete={handlePageDelete}
-                  ></PageItem>
-                ))}
+                {pageItems.map((item) => {
+                  console.log("Rendering page");
+                  return (
+                    <PageItem
+                      key={item.id}
+                      item={item}
+                      imageUrl={pageImages[item.id]}
+                      onDelete={handlePageDelete}
+                    ></PageItem>
+                  );
+                })}
               </div>
             </SortableContext>
           </DndContext>
