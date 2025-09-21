@@ -199,7 +199,7 @@ export default function Home() {
       }
     } else {
       setGroups((prev) => {
-        let updatedGroups = { ...prev };
+        const updatedGroups = { ...prev };
 
         if (activeContainer && activeContainer !== "ungrouped") {
           updatedGroups[activeContainer].pages = updatedGroups[
@@ -258,7 +258,7 @@ export default function Home() {
     const font = await mergedPDF.embedFont(StandardFonts.Helvetica);
 
     let pageCounter = 1;
-    let tableOfContents: tocEntry[] = [];
+    const tableOfContents: tocEntry[] = [];
 
     for (const [groupId, group] of Object.entries(groups)) {
       const startPage = pageCounter;
