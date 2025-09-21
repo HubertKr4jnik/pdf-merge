@@ -1,8 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import Dropzone from "react-dropzone";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
 import PageItem from "./pageItem";
+import GroupDropZone from "./groupDropZone";
 
 import {
   arrayMove,
@@ -33,6 +34,12 @@ type PDFPageItem = {
   fileName: string;
 };
 
+type tocEntry = {
+  name: string;
+  startPage: number;
+  endPage: number;
+};
+
 export default function Home() {
   const [files, setFiles] = useState<Array<File> | null>(null);
   const [fileUrls, setFileUrls] = useState<Array<string> | null>(null);
@@ -42,6 +49,10 @@ export default function Home() {
   const [pdfjsLoaded, setPdfjsLoaded] = useState(false);
   const [pageImages, setPageImages] = useState<Record<string, string>>({});
   const [isGeneratingImages, setIsGeneratingImages] = useState(false);
+  const [newGroupName, setNewGroupName] = useState<string>("");
+  const [groups, setGroups] = useState<{
+    [groupId: string]: { name: string; pages: string[] };
+  }>({});
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -162,13 +173,72 @@ export default function Home() {
   const handleDragEnd = (event) => {
     const { active, over } = event;
 
-    if (active.id !== over.id && over) {
-      setPageItems((items) => {
-        const oldIndex = items.findIndex((item) => item.id === active.id);
-        const newIndex = items.findIndex((item) => item.id === over.id);
+    const activeId = active.id;
+    const overId = over.id;
 
-        return arrayMove(items, oldIndex, newIndex);
+    const activeContainer = findPageContainer(active.id);
+    const overContainer = findPageContainer(over.id);
+
+    if (activeContainer && activeContainer === overContainer) {
+      if (activeContainer === "ungrouped") {
+        const oldIndex = pageItems.findIndex((item) => item.id === active.id);
+        const newIndex = pageItems.findIndex((item) => item.id === over.id);
+
+        setPageItems((items) => arrayMove(items, oldIndex, newIndex));
+      } else {
+        setGroups((prev) => {
+          const group = prev[activeContainer];
+          const oldIndex = group.pages.findIndex((id) => id === activeId);
+          const newIndex = group.pages.findIndex((id) => id === overId);
+          const newPages = arrayMove(group.pages, oldIndex, newIndex);
+          return {
+            ...prev,
+            [activeContainer]: { ...group, pages: newPages },
+          };
+        });
+      }
+    } else {
+      setGroups((prev) => {
+        let updatedGroups = { ...prev };
+
+        if (activeContainer && activeContainer !== "ungrouped") {
+          updatedGroups[activeContainer].pages = updatedGroups[
+            activeContainer
+          ].pages.filter((id) => id !== activeId);
+        }
+
+        if (overContainer && overContainer !== "ungrouped") {
+          const insertIndex = updatedGroups[overContainer].pages.findIndex(
+            (id) => id === overId
+          );
+          const newPages = [...updatedGroups[overContainer].pages];
+          // newPages.splice(insertIndex, 0, activeId);
+
+          updatedGroups[overContainer].pages = newPages;
+        }
+
+        return updatedGroups;
       });
+    }
+
+    // if (active.id !== over.id && over) {
+    //   setPageItems((items) => {
+    //     const oldIndex = items.findIndex((item) => item.id === active.id);
+    //     const newIndex = items.findIndex((item) => item.id === over.id);
+
+    //     return arrayMove(items, oldIndex, newIndex);
+    //   });
+    // }
+
+    if (groups[overId]) {
+      setGroups((prev) => ({
+        ...prev,
+        [overId]: {
+          ...prev[overId],
+          pages: [...prev[overId].pages, activeId],
+        },
+      }));
+      console.log(groups);
     }
   };
 
@@ -177,13 +247,85 @@ export default function Home() {
 
     const mergedPDF = await PDFDocument.create();
 
-    for (const pageItem of pageItems) {
+    // for (const pageItem of pageItems) {
+    //   const file = files[pageItem.fileIndex];
+    //   const arrayBuffer = await file.arrayBuffer();
+    //   const pdf = await PDFDocument.load(arrayBuffer);
+    //   const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
+    //   mergedPDF.addPage(page);
+    // }
+
+    const font = await mergedPDF.embedFont(StandardFonts.Helvetica);
+
+    let pageCounter = 1;
+    let tableOfContents: tocEntry[] = [];
+
+    for (const [groupId, group] of Object.entries(groups)) {
+      const startPage = pageCounter;
+      {
+        for (const pageId of group.pages) {
+          const pageItem = pageItems.find((p) => p.id === pageId);
+          const file = files[pageItem.fileIndex];
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await PDFDocument.load(arrayBuffer);
+          const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
+          mergedPDF.addPage(page);
+          pageCounter++;
+        }
+      }
+      const endPage = pageCounter - 1;
+      tableOfContents.push({
+        name: group.name,
+        startPage: startPage + 1,
+        endPage: endPage + 1,
+      });
+    }
+
+    for (const pageItem of ungroupedPages) {
       const file = files[pageItem.fileIndex];
       const arrayBuffer = await file.arrayBuffer();
       const pdf = await PDFDocument.load(arrayBuffer);
       const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
       mergedPDF.addPage(page);
     }
+
+    tableOfContents.push({
+      name: "Ungrouped",
+      startPage: pageCounter + 1,
+      endPage: pageItems.length + 1,
+    });
+
+    const tocPage = mergedPDF.insertPage(0, [595.28, 841.89]);
+    const fontSize = 14;
+    const lineHeight = fontSize + 4;
+
+    tocPage.drawText("Table of contents", {
+      x: 50,
+      y: 800,
+      size: 20,
+      font,
+      color: rgb(0, 0, 0),
+    });
+
+    tableOfContents.forEach((entry, index) => {
+      const y = 760 - index * lineHeight;
+      const { name, startPage, endPage } = entry;
+
+      const text = `${name}: ${startPage} - ${endPage}`;
+      tocPage.drawText(text, {
+        x: 50,
+        y,
+        size: fontSize,
+        font,
+        color: rgb(0, 0, 0),
+      });
+
+      const textWidth = font.widthOfTextAtSize(text, fontSize);
+      const textHeight = fontSize;
+
+      const destinationPage = mergedPDF.getPage(startPage - 1);
+      tocPage.doc.context.register(destinationPage.ref);
+    });
 
     const savedPDF = await mergedPDF.save();
 
@@ -211,6 +353,38 @@ export default function Home() {
       delete newImages[pageId];
       return newImages;
     });
+  };
+
+  const handleGroupCreate = () => {
+    const groupId = `group-${Date.now()}`;
+    setGroups((prev) => ({
+      ...prev,
+      [groupId]: {
+        name: newGroupName,
+        pages: [],
+      },
+    }));
+    setNewGroupName("");
+  };
+
+  const groupedPageIds = new Set(
+    Object.values(groups).flatMap((group) => group.pages)
+  );
+
+  const ungroupedPages = pageItems.filter(
+    (page) => !groupedPageIds.has(page.id)
+  );
+
+  const findPageContainer = (pageId: string) => {
+    for (const [groupId, group] of Object.entries(groups)) {
+      if (group.pages.includes(pageId)) {
+        return groupId;
+      }
+    }
+    if (pageItems.find((page) => page.id === pageId)) {
+      return "ungrouped";
+    }
+    return null;
   };
 
   if (!isClient || !pdfjsLoaded) {
@@ -264,30 +438,78 @@ export default function Home() {
         )}
         {/* {console.log(pageItems.length, fileUrls, pageItems > 0 && fileUrls)} */}
         {pageItems.length > 0 && fileUrls && (
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={pageItems.map((item) => item.id)}
-              strategy={rectSortingStrategy}
+          <>
+            <div className="relative flex place-items-center justify-center border m-4 py-4 gap-4 border-gray-600 rounded hover:border-cyan-600 transition-all">
+              <input
+                type="text"
+                placeholder="New group name..."
+                className="border border-gray-600 p-2 rounded text-white"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+              />
+              <p
+                className="px-4 py-2 border border-gray-600 text-gray-300 hover:text-gray-100 hover:border-cyan-600 transition-all cursor-pointer rounded"
+                onClick={handleGroupCreate}
+              >
+                Add
+              </p>
+            </div>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
             >
-              <div className="flex flex-wrap gap-4 justify-center">
-                {pageItems.map((item) => {
-                  console.log("Rendering page");
-                  return (
-                    <PageItem
-                      key={item.id}
-                      item={item}
-                      imageUrl={pageImages[item.id]}
-                      onDelete={handlePageDelete}
-                    ></PageItem>
-                  );
-                })}
-              </div>
-            </SortableContext>
-          </DndContext>
+              {Object.entries(groups).map(([groupId, group]) => (
+                <GroupDropZone key={groupId} id={groupId}>
+                  <SortableContext
+                    items={group.pages}
+                    strategy={rectSortingStrategy}
+                  >
+                    <p>
+                      {group.name}{" "}
+                      <span className="text-gray-400">
+                        (drag and drop pages into the center of this element to
+                        add them)
+                      </span>
+                    </p>
+                    <div className="flex gap-4 w-full h-full">
+                      {group.pages.map((pageId) => {
+                        const item = pageItems.find((p) => p.id === pageId);
+                        return (
+                          item && (
+                            <PageItem
+                              key={item.id}
+                              item={item}
+                              imageUrl={pageImages[item.id]}
+                              onDelete={handlePageDelete}
+                            />
+                          )
+                        );
+                      })}
+                    </div>
+                  </SortableContext>
+                </GroupDropZone>
+              ))}
+              <SortableContext
+                items={[...pageItems.map((item) => item.id)]}
+                strategy={rectSortingStrategy}
+              >
+                <div className="flex flex-wrap gap-4 justify-center">
+                  {ungroupedPages.map((item) => {
+                    console.log("Rendering page");
+                    return (
+                      <PageItem
+                        key={item.id}
+                        item={item}
+                        imageUrl={pageImages[item.id]}
+                        onDelete={handlePageDelete}
+                      />
+                    );
+                  })}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </>
         )}
       </main>
     </div>
