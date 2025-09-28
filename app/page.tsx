@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import Dropzone from "react-dropzone";
-import { PDFDocument, rgb, StandardFonts } from "pdf-lib";
+import { PDFDocument, PDFName, rgb, StandardFonts } from "pdf-lib";
 import PageItem from "./pageItem";
 import GroupDropZone from "./groupDropZone";
 
@@ -17,6 +17,7 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
+  TouchSensor,
 } from "@dnd-kit/core";
 
 const loadPdfjs = async () => {
@@ -57,6 +58,12 @@ export default function Home() {
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
+        distance: 5,
+      },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: {
+        delay: 250,
         distance: 5,
       },
     })
@@ -281,19 +288,21 @@ export default function Home() {
       });
     }
 
-    for (const pageItem of ungroupedPages) {
-      const file = files[pageItem.fileIndex];
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await PDFDocument.load(arrayBuffer);
-      const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
-      mergedPDF.addPage(page);
-    }
+    if (ungroupedPages.length > 0) {
+      for (const pageItem of ungroupedPages) {
+        const file = files[pageItem.fileIndex];
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await PDFDocument.load(arrayBuffer);
+        const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
+        mergedPDF.addPage(page);
+      }
 
-    tableOfContents.push({
-      name: "Ungrouped",
-      startPage: pageCounter + 1,
-      endPage: pageItems.length + 1,
-    });
+      tableOfContents.push({
+        name: "Ungrouped",
+        startPage: pageCounter + 1,
+        endPage: pageItems.length + 1,
+      });
+    }
 
     const tocPage = mergedPDF.insertPage(0, [595.28, 841.89]);
     const fontSize = 14;
@@ -360,10 +369,19 @@ export default function Home() {
     setGroups((prev) => ({
       ...prev,
       [groupId]: {
-        name: newGroupName,
+        name: `Group ${Object.entries(groups).length + 1}` || newGroupName,
         pages: [],
       },
     }));
+    setNewGroupName("");
+  };
+
+  const handleGroupDelete = (groupId: string) => {
+    setGroups((prev) => {
+      const updated = { ...prev };
+      delete updated[groupId];
+      return updated;
+    });
     setNewGroupName("");
   };
 
@@ -436,7 +454,6 @@ export default function Home() {
             )}
           </Dropzone>
         )}
-        {/* {console.log(pageItems.length, fileUrls, pageItems > 0 && fileUrls)} */}
         {pageItems.length > 0 && fileUrls && (
           <>
             <div className="relative flex place-items-center justify-center border m-4 py-4 gap-4 border-gray-600 rounded hover:border-cyan-600 transition-all">
@@ -465,14 +482,22 @@ export default function Home() {
                     items={group.pages}
                     strategy={rectSortingStrategy}
                   >
-                    <p>
-                      {group.name}{" "}
-                      <span className="text-gray-400">
-                        (drag and drop pages into the center of this element to
-                        add them)
-                      </span>
-                    </p>
-                    <div className="flex gap-4 w-full h-full">
+                    <div className="flex place-items-center justify-between">
+                      <p>
+                        {group.name}{" "}
+                        <span className="text-gray-400">
+                          (drag and drop pages into the center of this element
+                          to add them)
+                        </span>
+                      </p>
+                      <input
+                        type="button"
+                        value="Delete"
+                        className="text-gray-400 pr-2 hover:text-white hover:underline cursor-pointer transition-all"
+                        onClick={() => handleGroupDelete(groupId)}
+                      />
+                    </div>
+                    <div className="flex flex-wrap pt-4 gap-4 w-full h-full">
                       {group.pages.map((pageId) => {
                         const item = pageItems.find((p) => p.id === pageId);
                         return (
@@ -490,24 +515,25 @@ export default function Home() {
                   </SortableContext>
                 </GroupDropZone>
               ))}
-              <SortableContext
-                items={[...pageItems.map((item) => item.id)]}
-                strategy={rectSortingStrategy}
-              >
-                <div className="flex flex-wrap gap-4 justify-center">
-                  {ungroupedPages.map((item) => {
-                    console.log("Rendering page");
-                    return (
-                      <PageItem
-                        key={item.id}
-                        item={item}
-                        imageUrl={pageImages[item.id]}
-                        onDelete={handlePageDelete}
-                      />
-                    );
-                  })}
-                </div>
-              </SortableContext>
+              <GroupDropZone id="ungrouped">
+                <SortableContext
+                  items={[...pageItems.map((item) => item.id)]}
+                  strategy={rectSortingStrategy}
+                >
+                  <div className="flex flex-wrap gap-4 justify-center">
+                    {ungroupedPages.map((item) => {
+                      return (
+                        <PageItem
+                          key={item.id}
+                          item={item}
+                          imageUrl={pageImages[item.id]}
+                          onDelete={handlePageDelete}
+                        />
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+              </GroupDropZone>
             </DndContext>
           </>
         )}
