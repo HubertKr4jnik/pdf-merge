@@ -50,7 +50,7 @@ export default function PageItem({ item, imageUrl, onDelete }: PageItemProps) {
 
   return (
     <div
-      className="relative max-w-1/6"
+      className="relative max-w-1/6 touch-none"
       ref={(node) => {
         setNodeRef(node);
         ref(node);

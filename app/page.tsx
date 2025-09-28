@@ -19,6 +19,7 @@ import {
   useSensors,
   TouchSensor,
 } from "@dnd-kit/core";
+import { PDFDocumentProxy } from "pdfjs-dist";
 
 const loadPdfjs = async () => {
   if (typeof window !== "undefined") {
@@ -54,6 +55,9 @@ export default function Home() {
   const [groups, setGroups] = useState<{
     [groupId: string]: { name: string; pages: string[] };
   }>({});
+  const [rebuildGroups, setRebuildGroups] = useState<boolean>(true);
+
+  const groupIds = Object.keys(groups);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -75,6 +79,13 @@ export default function Home() {
       setPdfjsLoaded(true);
     });
   }, []);
+
+  useEffect(() => {
+    if (rebuildGroups && pageItems.length > 0 && files) {
+      rebuildGroupsFromPdf(files, pageItems).then(setGroups);
+      setRebuildGroups(false);
+    }
+  }, [pageItems, files]);
 
   const handleFileDrop = async (acceptedFiles: Array<File>) => {
     setFiles(acceptedFiles);
@@ -106,6 +117,10 @@ export default function Home() {
     const context = canvas.getContext("2d");
     canvas.height = viewport.height;
     canvas.width = viewport.width;
+
+    if (!context) {
+      throw new Error("Could not get context from page");
+    }
 
     const renderContext = {
       canvasContext: context,
@@ -180,72 +195,79 @@ export default function Home() {
   const handleDragEnd = (event) => {
     const { active, over } = event;
 
-    const activeId = active.id;
-    const overId = over.id;
+    const activeIsGroup = groups.hasOwnProperty(active.id);
+    const overIsGroup = groups.hasOwnProperty(over.id);
 
-    const activeContainer = findPageContainer(active.id);
-    const overContainer = findPageContainer(over.id);
+    if (activeIsGroup && overIsGroup) {
+      const oldIndex = groupIds.indexOf(active.id);
+      const newIndex = groupIds.indexOf(over.id);
 
-    if (activeContainer && activeContainer === overContainer) {
-      if (activeContainer === "ungrouped") {
-        const oldIndex = pageItems.findIndex((item) => item.id === active.id);
-        const newIndex = pageItems.findIndex((item) => item.id === over.id);
+      if (oldIndex !== newIndex) {
+        const newGroupOrder = arrayMove(groupIds, oldIndex, newIndex);
 
-        setPageItems((items) => arrayMove(items, oldIndex, newIndex));
-      } else {
-        setGroups((prev) => {
-          const group = prev[activeContainer];
-          const oldIndex = group.pages.findIndex((id) => id === activeId);
-          const newIndex = group.pages.findIndex((id) => id === overId);
-          const newPages = arrayMove(group.pages, oldIndex, newIndex);
-          return {
-            ...prev,
-            [activeContainer]: { ...group, pages: newPages },
-          };
+        const reorderedGroups: typeof groups = {};
+        newGroupOrder.forEach((id) => {
+          reorderedGroups[id] = groups[id];
         });
+        setGroups(reorderedGroups);
       }
     } else {
-      setGroups((prev) => {
-        const updatedGroups = { ...prev };
+      const activeId = active.id;
+      const overId = over.id;
 
-        if (activeContainer && activeContainer !== "ungrouped") {
-          updatedGroups[activeContainer].pages = updatedGroups[
-            activeContainer
-          ].pages.filter((id) => id !== activeId);
+      const activeContainer = findPageContainer(active.id);
+      const overContainer = findPageContainer(over.id);
+
+      if (activeContainer && activeContainer === overContainer) {
+        if (activeContainer === "ungrouped") {
+          const oldIndex = pageItems.findIndex((item) => item.id === active.id);
+          const newIndex = pageItems.findIndex((item) => item.id === over.id);
+
+          setPageItems((items) => arrayMove(items, oldIndex, newIndex));
+        } else {
+          setGroups((prev) => {
+            const group = prev[activeContainer];
+            const oldIndex = group.pages.findIndex((id) => id === activeId);
+            const newIndex = group.pages.findIndex((id) => id === overId);
+            const newPages = arrayMove(group.pages, oldIndex, newIndex);
+            return {
+              ...prev,
+              [activeContainer]: { ...group, pages: newPages },
+            };
+          });
         }
+      } else {
+        setGroups((prev) => {
+          const updatedGroups = { ...prev };
 
-        if (overContainer && overContainer !== "ungrouped") {
-          const insertIndex = updatedGroups[overContainer].pages.findIndex(
-            (id) => id === overId
-          );
-          const newPages = [...updatedGroups[overContainer].pages];
-          // newPages.splice(insertIndex, 0, activeId);
+          if (activeContainer && activeContainer !== "ungrouped") {
+            updatedGroups[activeContainer].pages = updatedGroups[
+              activeContainer
+            ].pages.filter((id) => id !== activeId);
+          }
 
-          updatedGroups[overContainer].pages = newPages;
-        }
+          if (overContainer && overContainer !== "ungrouped") {
+            const insertIndex = updatedGroups[overContainer].pages.findIndex(
+              (id) => id === overId
+            );
+            const newPages = [...updatedGroups[overContainer].pages];
+            updatedGroups[overContainer].pages = newPages;
+          }
 
-        return updatedGroups;
-      });
-    }
+          return updatedGroups;
+        });
+      }
 
-    // if (active.id !== over.id && over) {
-    //   setPageItems((items) => {
-    //     const oldIndex = items.findIndex((item) => item.id === active.id);
-    //     const newIndex = items.findIndex((item) => item.id === over.id);
-
-    //     return arrayMove(items, oldIndex, newIndex);
-    //   });
-    // }
-
-    if (groups[overId]) {
-      setGroups((prev) => ({
-        ...prev,
-        [overId]: {
-          ...prev[overId],
-          pages: [...prev[overId].pages, activeId],
-        },
-      }));
-      console.log(groups);
+      if (groups[overId]) {
+        setGroups((prev) => ({
+          ...prev,
+          [overId]: {
+            ...prev[overId],
+            pages: [...prev[overId].pages, activeId],
+          },
+        }));
+        // console.log(groups);
+      }
     }
   };
 
@@ -253,14 +275,6 @@ export default function Home() {
     if (!files) return;
 
     const mergedPDF = await PDFDocument.create();
-
-    // for (const pageItem of pageItems) {
-    //   const file = files[pageItem.fileIndex];
-    //   const arrayBuffer = await file.arrayBuffer();
-    //   const pdf = await PDFDocument.load(arrayBuffer);
-    //   const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
-    //   mergedPDF.addPage(page);
-    // }
 
     const font = await mergedPDF.embedFont(StandardFonts.Helvetica);
 
@@ -272,10 +286,31 @@ export default function Home() {
       {
         for (const pageId of group.pages) {
           const pageItem = pageItems.find((p) => p.id === pageId);
+
+          if (!pageItem) {
+            return;
+          }
+
           const file = files[pageItem.fileIndex];
           const arrayBuffer = await file.arrayBuffer();
           const pdf = await PDFDocument.load(arrayBuffer);
           const [page] = await mergedPDF.copyPages(pdf, [pageItem.pageNumber]);
+
+          const fontSize = 10;
+          const text = `Group: ${group.name}`;
+          const textWidth = font.widthOfTextAtSize(text, fontSize);
+
+          const x = 40;
+          const y = 20;
+
+          page.drawText(text, {
+            x,
+            y,
+            size: fontSize,
+            font,
+            color: rgb(0.5, 0.5, 0.5),
+          });
+
           mergedPDF.addPage(page);
           pageCounter++;
         }
@@ -333,20 +368,112 @@ export default function Home() {
       const textHeight = fontSize;
 
       const destinationPage = mergedPDF.getPage(startPage - 1);
+      const destinationRef = destinationPage.ref;
+
+      const destinationArray = mergedPDF.context.obj([
+        destinationRef,
+        PDFName.of("Fit"),
+      ]);
+
+      const linkAnnotation = mergedPDF.context.obj({
+        Type: "Annot",
+        Subtype: "Link",
+        Rect: [50, y, 50 + textWidth, y + textHeight],
+        Border: [0, 0, 0],
+        A: {
+          Type: "Action",
+          S: "GoTo",
+          D: destinationArray,
+        },
+      });
+
+      const annots = tocPage.node.Annots() || mergedPDF.context.obj([]);
+      const annotsArray = mergedPDF.context.obj([]);
+
+      for (let i = 0; i < annots.size(); i++) {
+        annotsArray.push(annots.get(i));
+      }
+
+      annotsArray.push(linkAnnotation);
+
+      tocPage.node.set(PDFName.of("Annots"), annotsArray);
+
       tocPage.doc.context.register(destinationPage.ref);
     });
 
     const savedPDF = await mergedPDF.save();
 
-    const mergedFileBlob = new Blob([savedPDF], { type: "application/pdf" });
+    const mergedFileBlob = new Blob([new Uint8Array(savedPDF)], {
+      type: "application/pdf",
+    });
     const mergedFileURL = URL.createObjectURL(mergedFileBlob);
 
-    console.log(mergedFileURL);
+    // console.log(mergedFileURL);
 
     const a = document.createElement("a");
     a.href = mergedFileURL;
     a.download = mergedFileName || "merged";
     a.click();
+  };
+
+  const getGroupNameFromPage = async (
+    pdf: PDFDocumentProxy,
+    pageIndex: number
+  ) => {
+    const page = await pdf.getPage(pageIndex + 1);
+    const content = await page.getTextContent();
+
+    for (const item of content.items) {
+      if ("str" in item && item.str.startsWith("Group:")) {
+        return item.str.replace("Group: ", "").trim();
+      }
+    }
+    return null;
+  };
+
+  const rebuildGroupsFromPdf = async (
+    files: File[],
+    pageItems: PDFPageItem[]
+  ) => {
+    const rebuiltGroups: {
+      [groupId: string]: {
+        name: string;
+        pages: string[];
+      };
+    } = {};
+
+    const pdfjsLib = await import("pdfjs-dist");
+
+    const pdfCache: { [key: number]: PDFDocumentProxy } = {};
+
+    for (const pageItem of pageItems) {
+      const fileIndex = pageItem.fileIndex;
+
+      if (!pdfCache[fileIndex]) {
+        const arrayBuffer = await files[fileIndex].arrayBuffer();
+        const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+        pdfCache[fileIndex] = await loadingTask.promise;
+      }
+
+      const pdf = pdfCache[fileIndex];
+
+      const groupName = await getGroupNameFromPage(pdf, pageItem.pageNumber);
+
+      if (groupName) {
+        const groupId = groupName.toLowerCase().replace(/\s+/g, "-");
+
+        if (!rebuiltGroups[groupId]) {
+          rebuiltGroups[groupId] = {
+            name: groupName,
+            pages: [],
+          };
+        }
+
+        rebuiltGroups[groupId].pages.push(pageItem.id);
+      }
+    }
+
+    return rebuiltGroups;
   };
 
   const handlePageDelete = (pageId: string) => {
@@ -369,7 +496,7 @@ export default function Home() {
     setGroups((prev) => ({
       ...prev,
       [groupId]: {
-        name: `Group ${Object.entries(groups).length + 1}` || newGroupName,
+        name: newGroupName || `Group ${Object.entries(groups).length + 1}`,
         pages: [],
       },
     }));
@@ -471,66 +598,72 @@ export default function Home() {
                 Add
               </p>
             </div>
+            <p className="text-center">Drag and drop groups to reorder them</p>
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
-              {Object.entries(groups).map(([groupId, group]) => (
-                <GroupDropZone key={groupId} id={groupId}>
-                  <SortableContext
-                    items={group.pages}
-                    strategy={rectSortingStrategy}
-                  >
-                    <div className="flex place-items-center justify-between">
-                      <p>
-                        {group.name}{" "}
-                        <span className="text-gray-400">
-                          (drag and drop pages into the center of this element
-                          to add them)
-                        </span>
-                      </p>
-                      <input
-                        type="button"
-                        value="Delete"
-                        className="text-gray-400 pr-2 hover:text-white hover:underline cursor-pointer transition-all"
-                        onClick={() => handleGroupDelete(groupId)}
-                      />
-                    </div>
-                    <div className="flex flex-wrap pt-4 gap-4 w-full h-full">
-                      {group.pages.map((pageId) => {
-                        const item = pageItems.find((p) => p.id === pageId);
-                        return (
-                          item && (
-                            <PageItem
-                              key={item.id}
-                              item={item}
-                              imageUrl={pageImages[item.id]}
-                              onDelete={handlePageDelete}
-                            />
-                          )
-                        );
-                      })}
-                    </div>
-                  </SortableContext>
-                </GroupDropZone>
-              ))}
+              <SortableContext items={groupIds} strategy={rectSortingStrategy}>
+                {Object.entries(groups).map(([groupId, group]) => (
+                  <GroupDropZone key={groupId} id={groupId}>
+                    <SortableContext
+                      items={group.pages}
+                      strategy={rectSortingStrategy}
+                    >
+                      <div className="flex place-items-center justify-between">
+                        <p>
+                          {group.name}{" "}
+                          <span className="text-gray-400">
+                            (drag and drop pages into the center of this element
+                            to add them)
+                          </span>
+                        </p>
+                        <input
+                          type="button"
+                          value="Delete"
+                          className="text-gray-400 pr-2 hover:text-white hover:underline cursor-pointer transition-all"
+                          onClick={() => handleGroupDelete(groupId)}
+                        />
+                      </div>
+                      <div className="flex flex-wrap pt-4 gap-4 w-full h-full">
+                        {group.pages.map((pageId) => {
+                          const item = pageItems.find((p) => p.id === pageId);
+                          return (
+                            item && (
+                              <PageItem
+                                key={item.id}
+                                item={item}
+                                imageUrl={pageImages[item.id]}
+                                onDelete={handlePageDelete}
+                              />
+                            )
+                          );
+                        })}
+                      </div>
+                    </SortableContext>
+                  </GroupDropZone>
+                ))}
+              </SortableContext>
               <GroupDropZone id="ungrouped">
                 <SortableContext
                   items={[...pageItems.map((item) => item.id)]}
                   strategy={rectSortingStrategy}
                 >
-                  <div className="flex flex-wrap gap-4 justify-center">
-                    {ungroupedPages.map((item) => {
-                      return (
-                        <PageItem
-                          key={item.id}
-                          item={item}
-                          imageUrl={pageImages[item.id]}
-                          onDelete={handlePageDelete}
-                        />
-                      );
-                    })}
+                  <div className="flex flex-col gap-4">
+                    <p>Ungrouped</p>
+                    <div className="flex flex-wrap gap-4">
+                      {ungroupedPages.map((item) => {
+                        return (
+                          <PageItem
+                            key={item.id}
+                            item={item}
+                            imageUrl={pageImages[item.id]}
+                            onDelete={handlePageDelete}
+                          />
+                        );
+                      })}
+                    </div>
                   </div>
                 </SortableContext>
               </GroupDropZone>
